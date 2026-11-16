@@ -5,7 +5,7 @@ Módulo responsável pelas primitivas criptográficas do Vault:
 - KDF: Argon2id (RFC 9106)
 - AEAD: AES-256-GCM
 - CSPRNG: os.urandom / secrets
-- Sanitização de memória: sobrescrita forçada de buffers mutáveis (bytearrays)
+- Memória: sobrescrita dos buffers mutáveis sob controle do programa
 """
 
 import os
@@ -31,7 +31,7 @@ ARGON2_PARALLELISM = 4         # Número de threads paralelas
 def secure_zero_memory(target: bytearray) -> None:
     """
     Sobrescreve a memória de um bytearray mutável com zeros utilizando ctypes.
-    Mitiga ataques de inspeção de memória em tempo de execução ou pós-despejo (core dump).
+    Afeta apenas o buffer recebido. Outras cópias podem permanecer em memória.
     """
     if not isinstance(target, bytearray):
         raise TypeError("A sanitização requer um objeto mutável do tipo 'bytearray'.")
@@ -63,7 +63,7 @@ def derive_key(master_password: str, salt: bytes) -> bytearray:
         derived = kdf.derive(bytes(pwd_bytes))
         return bytearray(derived)
     finally:
-        # Destrói a cópia em memória da senha mestra codificada em bytes
+        # Zera apenas a cópia mutável da senha codificada em UTF-8.
         secure_zero_memory(pwd_bytes)
 
 
@@ -71,7 +71,7 @@ def encrypt_payload(plaintext: bytes, key: bytearray) -> Tuple[bytes, bytes]:
     """
     Cifra o payload com AES-256-GCM.
     Retorna uma tupla: (nonce, ciphertext_com_tag).
-    Garante o uso de CSPRNG (os.urandom) para um nonce único de 96 bits.
+    Sorteia um nonce de 96 bits por cifragem. Colisões são possíveis.
     """
     if len(key) != KEY_LEN:
         raise ValueError(f"Chave AES inválida: esperado {KEY_LEN} bytes.")
@@ -99,7 +99,7 @@ def decrypt_payload(nonce: bytes, ciphertext: bytes, key: bytearray) -> bytes:
     aesgcm = AESGCM(bytes(key))
     ad = MAGIC_BYTES + FORMAT_VERSION.to_bytes(1, byteorder="big")
     
-    # O método decrypt verifica a integridade do Authentication Tag de 128 bits em tempo constante
+    # AESGCM.decrypt verifica a tag antes de devolver o texto claro.
     return aesgcm.decrypt(nonce, ciphertext, ad)
 
 

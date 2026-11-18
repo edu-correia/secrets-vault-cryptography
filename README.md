@@ -56,15 +56,16 @@ O gerador sorteia cada posição com `secrets.choice` e descarta o candidato int
 O código fica em `src/` e os testes ficam em `tests/`:
 ```
 secrets-vault-cryptography/
-├── requirements.txt         # Dependências externas
-├── README.md                # Este documento
+├── requirements.txt                  # Dependências externas
+├── README.md                         # Este documento
 ├── src/
-│   ├── crypto_engine.py     # Argon2id, AES-GCM e operações com buffers
-│   ├── vault.py             # Lógica de gerenciamento do cofre e gerador CSPRNG
-│   └── cli.py               # Interface de linha de comando interativa
+│   ├── crypto_engine.py              # Argon2id, AES-GCM e operações com buffers
+│   ├── vault.py                      # Lógica de gerenciamento do cofre e gerador CSPRNG
+│   └── cli.py                        # Interface de linha de comando interativa
 └── tests/
     ├── __init__.py
-    └── test_vault.py        # Suíte de testes automatizados de segurança
+    └── test_vault.py                # Suíte de testes automatizados de segurança
+    └── test_password_feedback.py    # Testes adicionais da força das senhas
 ```
 
 ## 4. Instalação

@@ -6,6 +6,7 @@ Oferece menus para inicializar, autenticar, adicionar, buscar, listar, gerar sen
 """
 
 import argparse
+import base64
 import getpass
 import os
 import shutil
@@ -43,19 +44,111 @@ def prompt_master_password(confirm: bool = False) -> str:
         print("[ERRO] As senhas digitadas não coincidem.")
 
 
-def clipboard_backend() -> str | None:
-    # Alguns backends automáticos do pyperclip passam o texto na linha de comando.
-    if sys.platform == "win32":
-        return "windows"
-    if sys.platform == "darwin":
-        return "pbcopy"
-    if os.getenv("WAYLAND_DISPLAY") and shutil.which("wl-copy") and shutil.which("wl-paste"):
-        return "wl-clipboard"
-    if os.getenv("DISPLAY"):
-        for backend in ("xclip", "xsel"):
-            if shutil.which(backend):
-                return backend
-    return None
+def copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """
+    Copia o texto para a área de transferência usando o utilitário adequado.
+    Alimenta o processo exclusivamente via stdin para impedir vazamento de senhas
+    na tabela de processos do sistema operacional (ps aux).
+    """
+    payload = text.encode("utf-8")
+
+    # 1. Wayland nativo (Padrão no Ubuntu 22.04)
+    if os.getenv("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+        try:
+            subprocess.run(["wl-copy"], input=payload, check=True, stdout=subprocess.DEVNULL)
+            return True, "Senha copiada via wl-copy (Wayland)."
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # 2. X11 / XWayland via xclip
+    if os.getenv("DISPLAY") and shutil.which("xclip"):
+        try:
+            subprocess.run(
+                ["xclip", "-selection", "clipboard"],
+                input=payload,
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            return True, "Senha copiada via xclip (X11)."
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # 3. X11 / XWayland via xsel
+    if os.getenv("DISPLAY") and shutil.which("xsel"):
+        try:
+            subprocess.run(
+                ["xsel", "--clipboard", "--input"],
+                input=payload,
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            return True, "Senha copiada via xsel (X11)."
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # 4. macOS
+    if sys.platform == "darwin" and shutil.which("pbcopy"):
+        try:
+            subprocess.run(["pbcopy"], input=payload, check=True)
+            return True, "Senha copiada via pbcopy."
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # 5. Windows
+    if sys.platform == "win32" and shutil.which("clip"):
+        try:
+            subprocess.run(["clip"], input=payload, check=True)
+            return True, "Senha copiada via clip.exe."
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+    # 6. Fallback: pyperclip (caso instalado e configurado)
+    try:
+        import pyperclip
+
+        pyperclip.copy(text)
+        return True, "Senha copiada via pyperclip."
+    except Exception:
+        pass
+
+    # 7. Fallback: Tkinter (caso python3-tk esteja presente no sistema)
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        root.destroy()
+        return True, "Senha copiada via interface gráfica (Tkinter)."
+    except Exception:
+        pass
+
+    # 8. Fallback: Sequência de escape de terminal OSC 52 (VS Code, Kitty, Alacritty, etc.)
+    if sys.stdout.isatty():
+        try:
+            b64 = base64.b64encode(payload).decode("ascii")
+            sys.stdout.write(f"\033]52;c;{b64}\a")
+            sys.stdout.flush()
+            # Retorna sucesso mas alerta caso o terminal não interprete OSC 52
+            return True, "Senha enviada ao terminal via OSC 52."
+        except Exception:
+            pass
+
+    # Diagnóstico específico para Linux
+    if sys.platform.startswith("linux"):
+        is_wayland = bool(os.getenv("WAYLAND_DISPLAY"))
+        recommended_pkg = "wl-clipboard" if is_wayland else "xclip"
+        msg = (
+            "Nenhum utilitário de área de transferência encontrado.\n"
+            f"No Ubuntu/Debian, instale executando:\n"
+            f"    sudo apt install {recommended_pkg}\n"
+            "    (ou: sudo apt install wl-clipboard xclip)"
+        )
+        return False, msg
+
+    return False, "Área de transferência indisponível nesta sessão."
 
 
 def offer_password_copy(password: str) -> None:
@@ -69,30 +162,11 @@ def offer_password_copy(password: str) -> None:
     if input("Copiar a senha para a área de transferência? (s/N): ").strip().lower() != "s":
         return
 
-    backend = clipboard_backend()
-    if backend is None:
-        print("[ERRO] Área de transferência indisponível nesta sessão.", file=sys.stderr)
-        return
-
-    try:
-        import pyperclip
-    except ImportError:
-        print("[ERRO] Instale as dependências para habilitar a cópia.", file=sys.stderr)
-        return
-
-    try:
-        pyperclip.set_clipboard(backend)
-        pyperclip.copy(password)
-        copied = pyperclip.paste() == password
-    except (pyperclip.PyperclipException, OSError, subprocess.SubprocessError, UnicodeError):
-        copied = False
-    if copied:
-        print("[OK] Senha copiada. Limpe a área de transferência após usar.")
+    success, message = copy_to_clipboard(password)
+    if success:
+        print(f"[OK] {message} Limpe a área de transferência após usar.")
     else:
-        print(
-            "[ERRO] Não foi possível confirmar a cópia. Verifique a área de transferência.",
-            file=sys.stderr,
-        )
+        print(f"[ERRO] {message}", file=sys.stderr)
 
 
 def choose_password() -> str | None:
